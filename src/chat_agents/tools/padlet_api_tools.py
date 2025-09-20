@@ -162,6 +162,48 @@ def remove_none_values(obj):
         return obj
 
 
+def _get_padlet_token_from_runtime() -> str | None:
+    """Resolve Padlet JWT from the current run's config/context.
+
+    Checks, in order:
+      - runtime.config.configurable["padlet_token"] (dict or attr style)
+      - runtime.context["padlet_token"] (dict or attr style)
+    """
+    runtime = get_runtime()
+
+    # Try config.configurable.padlet_token
+    try:
+        config_obj = getattr(runtime, "config", None)
+        configurable = None
+        if isinstance(config_obj, dict):
+            configurable = config_obj.get("configurable")
+        else:
+            configurable = getattr(config_obj, "configurable", None)
+
+        if isinstance(configurable, dict):
+            token = configurable.get("padlet_token")
+        else:
+            token = getattr(configurable, "padlet_token", None)
+        if token:
+            return str(token)
+    except Exception:
+        pass
+
+    # Try context.padlet_token
+    try:
+        ctx = getattr(runtime, "context", None)
+        if isinstance(ctx, dict):
+            token = ctx.get("padlet_token")
+        else:
+            token = getattr(ctx, "padlet_token", None)
+        if token:
+            return str(token)
+    except Exception:
+        pass
+
+    return None
+
+
 @tool(args_schema=UpdatePadletArgs)
 async def update_padlet(wall_id: int, wall_data: WallUpdateData):
     """Update the padlet's title, description, wallpaper, sections, posts and settings.
@@ -181,18 +223,22 @@ async def update_padlet(wall_id: int, wall_data: WallUpdateData):
 
     """
     # Prefer a per-run JWT provided by the caller via run config: config.configurable.padlet_token
-    runtime = get_runtime()
-    configurable = {}
-    try:
-        configurable = runtime.config.get("configurable", {})  # type: ignore[attr-defined]
-    except Exception:
-        configurable = {}
-
-    token = configurable.get("padlet_token")
+    token = _get_padlet_token_from_runtime()
     if not token:
-        raise WallUpdateFailedError(
-            "Missing Padlet JWT token. Pass it via config.configurable.padlet_token"
-        )
+        # Fallback for local/dev: allow env token if provided
+        env_token = os.getenv("PADLET_AI_TOKEN")
+        if env_token:
+            token = env_token
+        else:
+            # In development, emit a helpful hint without leaking values
+            if os.getenv("ENVIRONMENT") == "development":
+                pprint.pprint({
+                    "padlet_token_error": "Missing token",
+                    "expected_location": "config.configurable.padlet_token or context.padlet_token",
+                })
+            raise WallUpdateFailedError(
+                "Missing Padlet JWT token. Pass it via config.configurable.padlet_token"
+            )
 
     await send_update_wall_request(token=token, wall_id=wall_id, wall_data=wall_data)
     return {"success": True, "wall_id": wall_id}
