@@ -6,7 +6,7 @@ Exports a top-level `graph` without custom checkpointing. Platform manages threa
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
-from .agents.surface_chat_agent_v1 import SurfaceChatAgentV1
+from chat_agents.agents.surface_chat_agent_v1 import SurfaceChatAgentV1
 
 
 # Export a top-level compiled graph for LangGraph Platform.
