@@ -6,6 +6,7 @@ the Rails API, using a JWT supplied per run via `config.configurable.padlet_toke
 
 from enum import Enum
 from typing import Any
+import json
 import os
 import pprint
 
@@ -224,49 +225,30 @@ async def update_padlet(wall_id: int, wall_data: WallUpdateData):
     """
     # Prefer a per-run JWT provided by the caller via run config: config.configurable.padlet_token
     token = _get_padlet_token_from_runtime()
-    if not token:
-        # Fallback for local/dev: allow env token if provided
-        env_token = os.getenv("PADLET_AI_TOKEN")
-        if env_token:
-            token = env_token
-        else:
-            # In development, emit a helpful hint without leaking values
-            if os.getenv("ENVIRONMENT") == "development":
-                pprint.pprint({
-                    "padlet_token_error": "Missing token",
-                    "expected_location": "config.configurable.padlet_token or context.padlet_token",
-                })
-            raise WallUpdateFailedError(
-                "Missing Padlet JWT token. Pass it via config.configurable.padlet_token"
-            )
+    # if not token:
+    #     # Fallback for local/dev: allow env token if provided
+    #     env_token = os.getenv("PADLET_AI_TOKEN")
+    #     if env_token:
+    #         token = env_token
+    #     else:
+    #         # In development, emit a helpful hint without leaking values
+    #         if os.getenv("ENVIRONMENT") == "development":
+    #             pprint.pprint({
+    #                 "padlet_token_error": "Missing token",
+    #                 "expected_location": "config.configurable.padlet_token or context.padlet_token",
+    #             })
+    #         raise WallUpdateFailedError(
+    #             "Missing Padlet JWT token. Pass it via config.configurable.padlet_token"
+    #         )
 
     await send_update_wall_request(token=token, wall_id=wall_id, wall_data=wall_data)
-    return {"success": True, "wall_id": wall_id}
+    # Return shape close to original
+    return {"wall_id": wall_id, "wall_data": wall_data}
 
 
-# Use data from the tool update_padlet to actually send update request to rails.
 async def send_update_wall_request(token: str, wall_id: int, wall_data: Any):
-    """Send the wall update to Rails, raising on non-200/invalid responses."""
-    # Convert Pydantic models into plain dicts before JSON serialization
-    def to_plain(obj: Any) -> Any:
-        try:
-            # pydantic v2
-            return obj.model_dump(exclude_none=True)  # type: ignore[attr-defined]
-        except Exception:
-            try:
-                # pydantic v1
-                return obj.dict(exclude_none=True)  # type: ignore[attr-defined]
-            except Exception:
-                if isinstance(obj, Enum):
-                    return obj.value
-                if isinstance(obj, list):
-                    return [to_plain(i) for i in obj]
-                if isinstance(obj, dict):
-                    return {k: to_plain(v) for k, v in obj.items()}
-                return obj
-
-    plain_wall_data = to_plain(wall_data)
-    cleaned_wall_data = remove_none_values(plain_wall_data)
+    """Send the wall update to Rails (legacy-compatible payload)."""
+    cleaned_wall_data = remove_none_values(wall_data)
     if os.getenv("ENVIRONMENT", "production") == "development":
         pprint.pprint({"sending_update_wall_request": cleaned_wall_data})
 
@@ -277,11 +259,7 @@ async def send_update_wall_request(token: str, wall_id: int, wall_data: Any):
         base_url = base_url.rstrip("/") + "/"
         async with session.post(
             f"{base_url}api/1/walls/{wall_id}/ai-chat",
-            json={
-                "tool_uses": [
-                    {"function_name": "update_padlet", "wall_data": cleaned_wall_data}
-                ]
-            },
+            json={"tool_uses": cleaned_wall_data},
             headers={"Authorization": f"Bearer {token}"},
         ) as response:
             if response.status == 200:
