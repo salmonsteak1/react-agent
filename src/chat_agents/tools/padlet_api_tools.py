@@ -247,7 +247,26 @@ async def update_padlet(wall_id: int, wall_data: WallUpdateData):
 # Use data from the tool update_padlet to actually send update request to rails.
 async def send_update_wall_request(token: str, wall_id: int, wall_data: Any):
     """Send the wall update to Rails, raising on non-200/invalid responses."""
-    cleaned_wall_data = remove_none_values(wall_data)
+    # Convert Pydantic models into plain dicts before JSON serialization
+    def to_plain(obj: Any) -> Any:
+        try:
+            # pydantic v2
+            return obj.model_dump(exclude_none=True)  # type: ignore[attr-defined]
+        except Exception:
+            try:
+                # pydantic v1
+                return obj.dict(exclude_none=True)  # type: ignore[attr-defined]
+            except Exception:
+                if isinstance(obj, Enum):
+                    return obj.value
+                if isinstance(obj, list):
+                    return [to_plain(i) for i in obj]
+                if isinstance(obj, dict):
+                    return {k: to_plain(v) for k, v in obj.items()}
+                return obj
+
+    plain_wall_data = to_plain(wall_data)
+    cleaned_wall_data = remove_none_values(plain_wall_data)
     if os.getenv("ENVIRONMENT", "production") == "development":
         pprint.pprint({"sending_update_wall_request": cleaned_wall_data})
 
@@ -258,7 +277,11 @@ async def send_update_wall_request(token: str, wall_id: int, wall_data: Any):
         base_url = base_url.rstrip("/") + "/"
         async with session.post(
             f"{base_url}api/1/walls/{wall_id}/ai-chat",
-            json={"tool_uses": cleaned_wall_data},
+            json={
+                "tool_uses": [
+                    {"function_name": "update_padlet", "wall_data": cleaned_wall_data}
+                ]
+            },
             headers={"Authorization": f"Bearer {token}"},
         ) as response:
             if response.status == 200:
