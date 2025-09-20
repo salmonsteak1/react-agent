@@ -241,16 +241,25 @@ async def update_padlet(wall_id: int, wall_data: WallUpdateData):
     #             "Missing Padlet JWT token. Pass it via config.configurable.padlet_token"
     #         )
 
-    await send_update_wall_request(token=token, wall_id=wall_id, wall_data=wall_data)
+    # Convert Pydantic model to a plain JSON-serializable dict before sending
+    try:
+        wall_data_plain = wall_data.model_dump(mode="json", exclude_none=True)
+    except Exception:
+        wall_data_plain = json.loads(wall_data.json(exclude_none=True))
+
+    await send_update_wall_request(token=token, wall_id=wall_id, wall_data=wall_data_plain)
     # Return shape close to original
-    return {"wall_id": wall_id, "wall_data": wall_data}
+    return {"wall_id": wall_id, "wall_data": wall_data_plain}
 
 
 async def send_update_wall_request(token: str, wall_id: int, wall_data: Any):
-    """Send the wall update to Rails (legacy-compatible payload)."""
     cleaned_wall_data = remove_none_values(wall_data)
+    cleaned_tool_uses = [
+        {"function_name": "update_padlet", "wall_data": cleaned_wall_data}
+    ]
+
     if os.getenv("ENVIRONMENT", "production") == "development":
-        pprint.pprint({"sending_update_wall_request": cleaned_wall_data})
+        pprint.pprint({"sending_update_wall_request": cleaned_tool_uses})
 
     async with aiohttp.ClientSession() as session:
         base_url = os.getenv("RAILS_INTERNAL_URL")
@@ -259,7 +268,7 @@ async def send_update_wall_request(token: str, wall_id: int, wall_data: Any):
         base_url = base_url.rstrip("/") + "/"
         async with session.post(
             f"{base_url}api/1/walls/{wall_id}/ai-chat",
-            json={"tool_uses": cleaned_wall_data},
+            json={"tool_uses": cleaned_tool_uses},
             headers={"Authorization": f"Bearer {token}"},
         ) as response:
             if response.status == 200:
