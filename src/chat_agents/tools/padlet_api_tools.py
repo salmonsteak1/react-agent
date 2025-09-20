@@ -1,15 +1,22 @@
-import os
-import pprint
+"""Padlet API tools used by chat agents.
+
+Provides a typed `update_padlet` tool that performs the HTTP update by calling
+the Rails API, using a JWT supplied per run via `config.configurable.padlet_token`.
+"""
+
 from enum import Enum
 from typing import Any
+import os
+import pprint
 
 import aiohttp
 from langchain_core.tools import tool
+from langgraph.runtime import get_runtime
 from pydantic import BaseModel, Field
 
 
 class WallUpdateFailedError(Exception):
-    pass
+    """Raised when the wall update fails or returns an invalid response."""
 
 
 class PadletFormat(str, Enum):
@@ -173,9 +180,19 @@ async def update_padlet(wall_id: int, wall_data: WallUpdateData):
         dict: A dictionary indicating success.
 
     """
-    token = os.getenv("PADLET_AI_TOKEN")
+    # Prefer a per-run JWT provided by the caller via run config: config.configurable.padlet_token
+    runtime = get_runtime()
+    configurable = {}
+    try:
+        configurable = runtime.config.get("configurable", {})  # type: ignore[attr-defined]
+    except Exception:
+        configurable = {}
+
+    token = configurable.get("padlet_token")
     if not token:
-        raise WallUpdateFailedError("PADLET_AI_TOKEN is not set in the environment")
+        raise WallUpdateFailedError(
+            "Missing Padlet JWT token. Pass it via config.configurable.padlet_token"
+        )
 
     await send_update_wall_request(token=token, wall_id=wall_id, wall_data=wall_data)
     return {"success": True, "wall_id": wall_id}
@@ -183,10 +200,10 @@ async def update_padlet(wall_id: int, wall_data: WallUpdateData):
 
 # Use data from the tool update_padlet to actually send update request to rails.
 async def send_update_wall_request(token: str, wall_id: int, wall_data: Any):
+    """Send the wall update to Rails, raising on non-200/invalid responses."""
     cleaned_wall_data = remove_none_values(wall_data)
     if os.getenv("ENVIRONMENT", "production") == "development":
-        print("Sending update wall request")
-        pprint.pprint(cleaned_wall_data)
+        pprint.pprint({"sending_update_wall_request": cleaned_wall_data})
 
     async with aiohttp.ClientSession() as session:
         base_url = os.getenv("RAILS_INTERNAL_URL")
