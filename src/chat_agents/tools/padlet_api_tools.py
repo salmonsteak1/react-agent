@@ -6,10 +6,8 @@ the Rails API, using a JWT supplied per run via `config.configurable.padlet_toke
 
 from enum import Enum
 from typing import Any
-import json
 import os
 import pprint
-
 import aiohttp
 from langchain_core.tools import tool
 from langgraph.runtime import get_runtime
@@ -164,46 +162,10 @@ def remove_none_values(obj):
 
 
 def _get_padlet_token_from_runtime() -> str | None:
-    """Resolve Padlet JWT from the current run's config/context.
-
-    Checks, in order:
-      - runtime.config.configurable["padlet_token"] (dict or attr style)
-      - runtime.context["padlet_token"] (dict or attr style)
-    """
     runtime = get_runtime()
-
-    # Try config.configurable.padlet_token
-    try:
-        config_obj = getattr(runtime, "config", None)
-        configurable = None
-        if isinstance(config_obj, dict):
-            configurable = config_obj.get("configurable")
-        else:
-            configurable = getattr(config_obj, "configurable", None)
-
-        if isinstance(configurable, dict):
-            token = configurable.get("padlet_token")
-        else:
-            token = getattr(configurable, "padlet_token", None)
-        if token:
-            return str(token)
-    except Exception:
-        pass
-
-    # Try context.padlet_token
-    try:
-        ctx = getattr(runtime, "context", None)
-        if isinstance(ctx, dict):
-            token = ctx.get("padlet_token")
-        else:
-            token = getattr(ctx, "padlet_token", None)
-        if token:
-            return str(token)
-    except Exception:
-        pass
-
-    return None
-
+    ctx = getattr(runtime, "context", {}) or {}
+    token = ctx.get("padlet_token")
+    return str(token) if token else None
 
 @tool(args_schema=UpdatePadletArgs)
 async def update_padlet(wall_id: int, wall_data: WallUpdateData):
@@ -220,35 +182,15 @@ async def update_padlet(wall_id: int, wall_data: WallUpdateData):
         wall_data (WallUpdateData): The data to update the wall with, include only parameters relevant to the requested changes. Structure:
 
     Returns:
-        dict: A dictionary indicating success.
+        dict: A dictionary containing the wall_id and the updated wall_data, indicating success.
 
     """
-    # Prefer a per-run JWT provided by the caller via run config: config.configurable.padlet_token
     token = _get_padlet_token_from_runtime()
-    # if not token:
-    #     # Fallback for local/dev: allow env token if provided
-    #     env_token = os.getenv("PADLET_AI_TOKEN")
-    #     if env_token:
-    #         token = env_token
-    #     else:
-    #         # In development, emit a helpful hint without leaking values
-    #         if os.getenv("ENVIRONMENT") == "development":
-    #             pprint.pprint({
-    #                 "padlet_token_error": "Missing token",
-    #                 "expected_location": "config.configurable.padlet_token or context.padlet_token",
-    #             })
-    #         raise WallUpdateFailedError(
-    #             "Missing Padlet JWT token. Pass it via config.configurable.padlet_token"
-    #         )
 
-    # Convert Pydantic model to a plain JSON-serializable dict before sending
-    try:
-        wall_data_plain = wall_data.model_dump(mode="json", exclude_none=True)
-    except Exception:
-        wall_data_plain = json.loads(wall_data.json(exclude_none=True))
+    # Convert Pydantic model to a plain JSON-serializable dict
+    wall_data_plain = wall_data.model_dump(mode="json", exclude_none=False)
 
     await send_update_wall_request(token=token, wall_id=wall_id, wall_data=wall_data_plain)
-    # Return shape close to original
     return {"wall_id": wall_id, "wall_data": wall_data_plain}
 
 
